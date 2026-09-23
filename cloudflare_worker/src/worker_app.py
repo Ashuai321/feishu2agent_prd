@@ -37,9 +37,10 @@ CALENDAR_CONFIRMATION_GATE = (
     "English equivalent). Invoke the write tool only after the matching confirmation for the "
     "immediately preceding proposal; if anything changes, re-propose. Re-read after success. "
     "If a calendar preview or other Agent image is produced, call the relay send_image tool "
-    "with an actual HTTPS URL, data URL, or base64 payload and wait for success before "
-    "record_result; a ChatGPT-side attachment or Markdown image link alone is not delivered "
-    "to Feishu/Lark. Preserve the requested template's visual structure, but never reject or "
+    "with image_base64 or a base64 data URL whenever possible; use an HTTPS URL only when it "
+    "is publicly downloadable. Never pass a ChatGPT-side attachment, private, or expiring URL. "
+    "Wait for send_image success before record_result; a ChatGPT-side attachment or Markdown "
+    "image link alone is not delivered to Feishu/Lark. Preserve the requested template's visual structure, but never reject or "
     "withhold a successfully rendered image only because its pixel dimensions or aspect ratio "
     "differs from the reference; send the generated image as-is."
 )
@@ -3153,12 +3154,19 @@ class CloudflareRelay:
         URL.  The bytes are validated against their actual image signature
         before they are uploaded to Feishu/Lark.
         """
-        image_url = str(
-            args.get("image_url") or args.get("data_url") or ""
-        ).strip()
-        image_base64 = str(
-            args.get("image_base64") or args.get("base64") or ""
-        ).strip()
+        # Some Agent image results arrive as a small object rather than a
+        # scalar MCP string.  Accept the common ``url``/``data``/``base64``
+        # shapes so a generated image is not accidentally stringified into an
+        # unusable URL.
+        raw_url = args.get("image_url") or args.get("data_url") or ""
+        raw_base64 = args.get("image_base64") or args.get("base64") or ""
+        if isinstance(raw_url, dict):
+            raw_base64 = raw_base64 or raw_url.get("base64") or raw_url.get("data")
+            raw_url = raw_url.get("url") or raw_url.get("href") or ""
+        if isinstance(raw_base64, dict):
+            raw_base64 = raw_base64.get("data") or raw_base64.get("base64") or ""
+        image_url = str(raw_url).strip()
+        image_base64 = str(raw_base64).strip()
         data: bytes
         if image_url.startswith("data:"):
             try:
@@ -3175,11 +3183,29 @@ class CloudflareRelay:
             parsed = urlparse(image_url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ValueError("image_url must be an http(s) URL or a data URL")
+            # Public signed image URLs commonly reject a bare Cloudflare
+            # request.  Use a normal browser-style request first, then retry
+            # once without Referer for hosts that reject cross-site requests.
+            request_headers = {
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "User-Agent": "Mozilla/5.0 (compatible; FeishuAgentRelay/1.0)",
+                "Referer": "https://chatgpt.com/",
+            }
             async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-                response = await client.get(image_url)
+                response = await client.get(image_url, headers=request_headers)
+                if response.status_code in {401, 403}:
+                    response = await client.get(
+                        image_url,
+                        headers={
+                            "Accept": request_headers["Accept"],
+                            "User-Agent": request_headers["User-Agent"],
+                        },
+                    )
             if response.status_code >= 400:
                 raise RuntimeError(
-                    f"image URL download failed with HTTP {response.status_code}"
+                    "image URL download failed with HTTP "
+                    f"{response.status_code}; use image_base64 or a base64 data URL "
+                    "for private/expiring Agent attachments"
                 )
             data = response.content
         elif image_base64:

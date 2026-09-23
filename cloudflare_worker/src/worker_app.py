@@ -21,7 +21,7 @@ PUBLIC_BASE_URL = "https://bot.boooe.com"
 FEISHU_AUTH_BASE_URL = "https://accounts.feishu.cn"
 MCP_PATH = "/mcp"
 MCP_PROTOCOL_VERSION = "2025-06-18"
-MCP_NAME = "workspace-agent-relay-mcp-prd"
+MCP_NAME = "workspace-agent-relay-mcp-dev"
 PLACEHOLDER = "正在处理，Agent 完成后会回复到这条消息。"
 MAX_CLIENTS = 50
 TRIGGER_RUNS_BETA = "workspace_agent_runs=v1"
@@ -253,6 +253,16 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     resource TEXT NOT NULL,
     expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+    refresh_token TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    expires_at INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client
+    ON oauth_refresh_tokens(client_id);
 CREATE TABLE IF NOT EXISTS feishu_oauth_states (
     state TEXT PRIMARY KEY,
     redirect_uri TEXT NOT NULL,
@@ -843,6 +853,44 @@ class D1State:
             """CREATE INDEX IF NOT EXISTS idx_bitable_group_mode_prompts_lookup
                 ON bitable_group_mode_prompts(source_platform, chat_id, requester_open_id, created_at DESC)""",
         )
+
+    async def ensure_relay_oauth_schema(self) -> None:
+        """Ensure only the MCP OAuth tables on an OAuth-first cold start."""
+        for statement in (
+            """CREATE TABLE IF NOT EXISTS oauth_clients (
+                client_id TEXT PRIMARY KEY,
+                client_name TEXT NOT NULL,
+                redirect_uris_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS oauth_codes (
+                code TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                redirect_uri TEXT NOT NULL,
+                code_challenge TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS oauth_tokens (
+                access_token TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+                refresh_token TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                expires_at INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client
+                ON oauth_refresh_tokens(client_id)""",
+        ):
+            await _db_run(self.db, statement)
 
     async def save_bitable_pending(
         self,
@@ -2537,6 +2585,37 @@ class CloudflareRelay:
             _env(self.env, "WORKSPACE_AGENT_RELAY_OAUTH_SCOPES", "workspace-agent-relay").split()
         ) or ["workspace-agent-relay"]
 
+    def oauth_access_token_ttl(self) -> int:
+        """Return the access-token lifetime in seconds.
+
+        The existing ten-year value remains the default deployment setting.
+        Refresh tokens provide the standards-compliant way to renew access
+        without requiring the user to authorize the MCP again.
+        """
+        try:
+            return max(
+                int(_env(self.env, "WORKSPACE_AGENT_RELAY_OAUTH_TOKEN_TTL_SECONDS", "86400")),
+                60,
+            )
+        except (TypeError, ValueError):
+            return 86400
+
+    def oauth_refresh_token_ttl(self) -> int:
+        """Return refresh-token lifetime; zero means no expiry."""
+        try:
+            return max(
+                int(
+                    _env(
+                        self.env,
+                        "WORKSPACE_AGENT_RELAY_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
+                        "0",
+                    )
+                ),
+                0,
+            )
+        except (TypeError, ValueError):
+            return 0
+
     def auth_mode(self) -> str:
         configured = _env(self.env, "WORKSPACE_AGENT_RELAY_AUTH_MODE")
         if configured:
@@ -2760,6 +2839,18 @@ class CloudflareRelay:
                 and int(row.get("expires_at", 0)) >= _now()
                 and row.get("resource") == self.base_url() + MCP_PATH
             )
+            # Extend active legacy tokens as they are used.  Tokens issued
+            # before refresh-token support therefore continue working without
+            # forcing a user to reconnect, while newly issued tokens use the
+            # standard refresh-token grant below.
+            if valid and row and int(row.get("expires_at", 0)) < _now() + 86400 * 30:
+                with contextlib.suppress(Exception):
+                    await _db_run(
+                        self.state.db,
+                        "UPDATE oauth_tokens SET expires_at = ? WHERE access_token = ?",
+                        _now() + self.oauth_access_token_ttl(),
+                        token,
+                    )
         if valid:
             return None
         metadata = f"{self.base_url()}/.well-known/oauth-protected-resource/mcp"
@@ -2770,6 +2861,14 @@ class CloudflareRelay:
         )
 
     async def oauth(self, request: Any, path: str) -> Response:
+        # The OAuth endpoints can be the first request after a fresh deploy;
+        # initialize the D1 schema here so the refresh-token table exists even
+        # before the first Feishu webhook has arrived.
+        ensure_oauth_schema = getattr(self.state, "ensure_relay_oauth_schema", None)
+        if ensure_oauth_schema is not None:
+            await ensure_oauth_schema()
+        else:
+            await self.state.ensure_schema()
         base = self.base_url()
         if path in {
             "/.well-known/oauth-authorization-server",
@@ -2782,7 +2881,7 @@ class CloudflareRelay:
                     "token_endpoint": f"{base}/oauth/token",
                     "registration_endpoint": f"{base}/oauth/register",
                     "response_types_supported": ["code"],
-                    "grant_types_supported": ["authorization_code"],
+                    "grant_types_supported": ["authorization_code", "refresh_token"],
                     "token_endpoint_auth_methods_supported": ["none"],
                     "code_challenge_methods_supported": ["S256"],
                     "scopes_supported": self.scopes(),
@@ -2894,6 +2993,50 @@ class CloudflareRelay:
             return _text_response("", 302, {"Location": location})
         if path == "/oauth/token" and request.method == "POST":
             params = await self._body_params(request)
+            grant_type = str(params.get("grant_type") or "authorization_code")
+            if grant_type == "refresh_token":
+                refresh_token = str(params.get("refresh_token") or "")
+                refresh_row = await _db_first(
+                    self.state.db,
+                    "SELECT * FROM oauth_refresh_tokens WHERE refresh_token = ?",
+                    refresh_token,
+                )
+                refresh_valid = bool(
+                    refresh_row
+                    and (
+                        int(refresh_row.get("expires_at", 0)) <= 0
+                        or int(refresh_row.get("expires_at", 0)) >= _now()
+                    )
+                    and (
+                        not params.get("client_id")
+                        or str(params.get("client_id")) == str(refresh_row.get("client_id"))
+                    )
+                    and str(refresh_row.get("resource")) == base + MCP_PATH
+                )
+                if not refresh_valid:
+                    return _response({"error": "invalid_grant"}, 400)
+                access_token = "mcp_at_" + secrets.token_urlsafe(40)
+                expires_in = self.oauth_access_token_ttl()
+                await _db_run(
+                    self.state.db,
+                    "INSERT INTO oauth_tokens(access_token, client_id, scope, resource, expires_at) VALUES (?, ?, ?, ?, ?)",
+                    access_token,
+                    str(refresh_row["client_id"]),
+                    str(refresh_row["scope"]),
+                    str(refresh_row["resource"]),
+                    _now() + expires_in,
+                )
+                return _response(
+                    {
+                        "access_token": access_token,
+                        "token_type": "Bearer",
+                        "expires_in": expires_in,
+                        "refresh_token": refresh_token,
+                        "scope": str(refresh_row["scope"]),
+                    }
+                )
+            if grant_type != "authorization_code":
+                return _response({"error": "unsupported_grant_type"}, 400)
             code = str(params.get("code") or "")
             row = await _db_first(self.state.db, "SELECT * FROM oauth_codes WHERE code = ?", code)
             if not row:
@@ -2910,9 +3053,9 @@ class CloudflareRelay:
             ):
                 return _response({"error": "invalid_grant"}, 400)
             token = "mcp_at_" + secrets.token_urlsafe(40)
-            expires_in = max(
-                int(_env(self.env, "WORKSPACE_AGENT_RELAY_OAUTH_TOKEN_TTL_SECONDS", "86400")), 60
-            )
+            refresh_token = "mcp_rt_" + secrets.token_urlsafe(48)
+            expires_in = self.oauth_access_token_ttl()
+            refresh_ttl = self.oauth_refresh_token_ttl()
             await _db_run(
                 self.state.db,
                 "INSERT INTO oauth_tokens(access_token, client_id, scope, resource, expires_at) VALUES (?, ?, ?, ?, ?)",
@@ -2922,11 +3065,22 @@ class CloudflareRelay:
                 str(row["resource"]),
                 _now() + expires_in,
             )
+            await _db_run(
+                self.state.db,
+                "INSERT INTO oauth_refresh_tokens(refresh_token, client_id, scope, resource, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                refresh_token,
+                str(row["client_id"]),
+                str(row["scope"]),
+                str(row["resource"]),
+                0 if refresh_ttl <= 0 else _now() + refresh_ttl,
+                _now(),
+            )
             return _response(
                 {
                     "access_token": token,
                     "token_type": "Bearer",
                     "expires_in": expires_in,
+                    "refresh_token": refresh_token,
                     "scope": row["scope"],
                 }
             )

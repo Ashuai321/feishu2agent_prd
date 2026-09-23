@@ -1718,6 +1718,8 @@ def _conversation_input(
     continuation: bool,
     image_keys: list[str] | None = None,
     working_directory: str = "",
+    relay_name: str = MCP_NAME,
+    relay_base_url: str = PUBLIC_BASE_URL,
 ) -> str:
     # The trigger API accepts ``input`` as a string. The Agent's protocol
     # parser expects the established text envelope: protocol header,
@@ -1727,7 +1729,7 @@ def _conversation_input(
     header = [
         f"request_id: {request_id}",
         f"conversation_key: {conversation_key}",
-        f"relay_mcp: {MCP_NAME}",
+        f"relay_mcp: {relay_name}",
         "protocol: local-agent-shell/v1",
         f"turn_mode: {turn_mode}",
     ]
@@ -1743,7 +1745,7 @@ def _conversation_input(
                 "is returned to the quoted Feishu message."
             ),
             CALENDAR_CONFIRMATION_GATE,
-            f"The relay MCP server is {MCP_NAME} at https://bot.boooe.com{MCP_PATH}; call record_result there before ending the turn.",
+            f"The relay MCP server is {relay_name} at {relay_base_url.rstrip('/')}{MCP_PATH}; call record_result there before ending the turn.",
             "",
             "User task:",
             text.strip(),
@@ -1758,7 +1760,7 @@ def _conversation_input(
             "Call record_result exactly once when this turn is truly over: status=done when delivered, status=failed on an execution error, status=blocked only for an external hard blocker.",
             CALENDAR_CONFIRMATION_GATE,
             (
-                f"The relay MCP server is {MCP_NAME} at https://bot.boooe.com{MCP_PATH}. "
+                f"The relay MCP server is {relay_name} at {relay_base_url.rstrip('/')}{MCP_PATH}. "
                 "It is the required Feishu reply channel; do not only answer in the ChatGPT conversation."
             ),
             "Use get_requester_info with the conversation_key when the task depends on the person who mentioned the bot.",
@@ -2298,6 +2300,12 @@ class AgentRelayWorkflow:
             text=str(event.get("text") or ""),
             continuation=continuation,
             image_keys=event.get("image_keys") or [],
+            relay_name=_env(
+                self.relay.env,
+                "WORKSPACE_AGENT_RELAY_MCP_NAME",
+                MCP_NAME,
+            ),
+            relay_base_url=self.relay.base_url(),
         )
         await self.relay.state.create_run(
             request_id=request_id,
@@ -2948,7 +2956,7 @@ class CloudflareRelay:
                         "Use record_plan, record_progress and record_result for every relay turn. "
                         "If input is required, use ask_user; it delivers the question to the "
                         "current Feishu/Lark reply and keeps the run resumable. "
-                        "The relay name is workspace-agent-relay-mcp-prd."
+                        f"The relay name is {MCP_NAME}."
                     ),
                 }
             elif method == "ping":

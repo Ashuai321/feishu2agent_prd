@@ -15,7 +15,7 @@ Use this table before every search, read, create, update, delete, cancel, recurr
 
 ## Authoritative event color routing
 
-For every create and modify, compute one color before the proposal, show it in the preview, and use the same color in the write:
+For every create and modify, compute one color before the proposal, show it in the text proposal, and use the same color in the write:
 
 1. Uncertain, missing, approximate, unresolved, or date-only time: **pink**, regardless of modality or location.
 2. Definite time plus explicit online/线上, or no online/offline and no location: **green**.
@@ -57,15 +57,11 @@ confirms it. Explicit refusal has priority over any positive token: `不执行`,
 `不行的`, `不好`, `不好的`, `不可以`, `no`, or `不确认创建/修改/删除/取消` rejects the proposal and must not call a
 write tool, even if the same reply also contains `确认` or `可以`. A reply that changes fields, arrives without a pending
 proposal, or has neither clear polarity is not confirmation and requires a new question or proposal. This confirmation
-classification does not change discovery, conflict, preview, or write safeguards.
+classification does not change discovery, conflict, or write safeguards.
 
-For create or modify proposals that require a static PNG preview, the image shown in ChatGPT is not
-automatically delivered to Feishu/Lark. Call the relay MCP `send_image` with an actual HTTPS URL,
-data URL, or base64 payload and wait for success before calling `record_result`; a Markdown image
-link or ChatGPT-side attachment alone is not delivery. Preserve the template's visual structure, but
-do not reject or withhold a successfully rendered image solely because its pixel dimensions or aspect
-ratio differ from the reference. If image rendering or sending fails, return the exact failure and do
-not claim that the preview reached Feishu/Lark.
+For ordinary create or modify proposals, do not render, generate, attach, upload, or send a PNG preview. Do not call the relay MCP `send_image` solely for a calendar proposal. Keep the complete operation details in the text proposal and ask for the matching confirmation. User-provided itinerary images and image-to-event extraction remain governed by `references/pic-to-event.md`; this no-preview rule concerns only generated calendar previews.
+
+After a successful create or modify, re-read the target once and reply exactly with `创建成功，日程链接：<direct event URL>` or `修改成功，日程链接：<direct event URL>`. The URL must come from the write result or the successful re-read; never invent one. If the connected calendar tool returns no direct URL, state that the URL is unavailable instead of substituting an ID or Markdown link.
 
 ## Guardrails
 Every historical modification, deletion/cancellation, new creation, recurrence mutation, and invitation response requires confirmation. Do not infer criticality, uncertainty, meeting type, timezone, attendees, reminders, conferencing, recurrence, visibility, deletion scope, or other field changes. For recurring updates or deletions, ask whether the change is one occurrence or the series. If a requested palette color is unavailable, explain the mismatch and ask before proceeding.

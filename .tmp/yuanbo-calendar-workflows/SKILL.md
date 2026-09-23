@@ -18,7 +18,7 @@ and event colors. Never use the connector's default calendar. An explicitly name
 only allowed use of that calendar; family cues 小奇/小果/诺诺 route to `Family`; work-related requests
 must ask the user to choose `Bo Bozway` or `Bo YW`; all other or unclear requests default to `Bo Bozway`.
 For create/modify colors, uncertain time is pink with highest priority; with definite time, online or no
-modality/location is green, and offline or an actual location is purple. The preview and write must use
+modality/location is green, and offline or an actual location is purple. The text proposal and write must use
 the same resolved live-palette color.
 
 For create, update, delete, or cancel proposals, classify the direct confirmation reply as follows: after
@@ -39,5 +39,7 @@ Shared safeguards:
 - For deletion/cancellation, confirm the exact event, calendar, local time/timezone, and whether the request applies to one occurrence or the entire recurring series before calling the delete/cancel action.
 - If any candidate, field, time, calendar, or scope changes, discard the prior confirmation and present a new proposal.
 - Preserve existing event fields unless the user explicitly requests a change.
+- Do not generate, attach, upload, or send a PNG preview for ordinary create or modify requests; do not call `send_image` solely for a calendar proposal.
+- After a successful create or modify, re-read the target and reply exactly with `创建成功，日程链接：<direct event URL>` or `修改成功，日程链接：<direct event URL>`. Use only a URL returned by the write or re-read result; never invent one.
 - Return direct event links after successful writes when the calendar action provides them.
 - Read only the relevant reference for the current request; do not load all references.

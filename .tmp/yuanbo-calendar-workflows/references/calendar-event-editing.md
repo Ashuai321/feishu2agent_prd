@@ -2,8 +2,29 @@
 
 Use the target agent's existing Yuanbo calendar routing and Memory for calendar identity and timezone. Never copy fixed account names, IDs, mailbox values, or timezone defaults from another agent.
 
+## Authoritative calendar routing
+
+Use this table before every search, read, create, update, delete, cancel, recurrence, or invitation-response action. Never use the Google Calendar connector's default calendar.
+
+- Explicit `Perfect710` only: `perfect710\@gmail.com`.
+- 小奇, 小果, 果果, or 诺诺: `Family`, `family05788726987850932990\@group.calendar.google.com`.
+- Work-related: ask the user to choose `Bo Bozway` (`bo\@bozway.com`) or `Bo YW` (`bo\@you.world`); do not choose silently.
+- Explicit `Bo Bozway`, `Bo YW`, or `Family`: honor that named calendar.
+- No calendar name, no family/work cue, or unresolved nature: default to `Bo Bozway` (`bo\@bozway.com`).
+- Family cues outrank generic classification. Explicit calendar names outrank inferred nature, but `Perfect710` still requires the explicit name.
+
+## Authoritative event color routing
+
+For every create and modify, compute one color before the proposal, show it in the preview, and use the same color in the write:
+
+1. Uncertain, missing, approximate, unresolved, or date-only time: **pink**, regardless of modality or location.
+2. Definite time plus explicit online/线上, or no online/offline and no location: **green**.
+3. Definite time plus explicit offline/线下 or an actual location: **purple**.
+
+Resolve the live Google Calendar palette for the named color. Never use the connector default or silently substitute blue; if unavailable, report the mismatch and stop before writing.
+
 ## Workflow
-1. Resolve the target calendar from the user's request and Yuanbo's existing routing. Do not guess an ID from a display name.
+1. Resolve the target calendar with the authoritative routing table above and use its exact ID. Do not derive an ID from a display name.
 2. Resolve date/time using an explicit timezone, otherwise the reliable Yuanbo Memory default. Never silently substitute the calendar's configured timezone.
 3. Before a new event, search a bounded window across visible relevant calendars for strong duplicate/conflict candidates.
 4. For a modification, show distinguishing details, confirm the exact candidate, read it fully, and stop if it is read-only instead of redirecting silently.
@@ -11,7 +32,7 @@ Use the target agent's existing Yuanbo calendar routing and Memory for calendar 
 6. For a deletion or cancellation, identify the exact event and prepare a deletion proposal before calling the delete/cancel action. State the target calendar, event title/ID, local start/end time and timezone, and whether the whole event, one occurrence, or the entire recurring series will be removed. Require explicit confirmation for that exact proposal.
 7. Never add the requester as a guest. Add other guests only when explicitly requested; preserve attendees on updates unless asked to change them.
 8. Resolve Location from the user's explicit request. Do not invent Zoom, Lark, phone, links, or numbers.
-9. Apply color only when explicitly requested or required by the target workflow. Resolve the live palette; never guess IDs.
+9. Apply the authoritative color routing above. Resolve the live palette; never guess IDs.
 10. For recurrence, prefer a finite series when cadence repeats; calculate occurrence dates and counts, split series when times differ, and ask when allocation is ambiguous.
 11. Final confirmation must state create, modify, delete, or cancel, target calendar, local date/time/timezone, recurrence/counts and deletion scope where relevant, Location, guests, color, and every field that will change.
 12. After success, report the result and direct event URL; if no URL is returned, re-read once when possible and never invent one.

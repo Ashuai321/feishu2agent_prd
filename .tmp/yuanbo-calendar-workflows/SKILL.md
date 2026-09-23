@@ -13,6 +13,14 @@ Load only the one relevant reference:
 - Calendar search, availability, create, update, cancel, recurrence, color, or invitation response: read references/calendar-event-editing.md.
 - Skill creation, update, validation, improvement, or packaging: read references/skill-creator.md.
 
+For every calendar request, `references/calendar-event-editing.md` is authoritative for calendar routing
+and event colors. Never use the connector's default calendar. An explicitly named `Perfect710` is the
+only allowed use of that calendar; family cues 小奇/小果/诺诺 route to `Family`; work-related requests
+must ask the user to choose `Bo Bozway` or `Bo YW`; all other or unclear requests default to `Bo Bozway`.
+For create/modify colors, uncertain time is pink with highest priority; with definite time, online or no
+modality/location is green, and offline or an actual location is purple. The preview and write must use
+the same resolved live-palette color.
+
 Use yuanbo-calendar-onboarding only when its existing trigger requires missing durable defaults; do not restate or replace that Skill. Existing Yuanbo Memory, the connected Google Calendar account, and the target agent's original instructions remain authoritative for calendar identity, timezone, defaults, and persistence. Do not import another agent's account names, calendar IDs, mailbox, timezone, or defaults. If a required app or dependency is not attached, explain the exact gap and stop rather than substituting another account or writing directly.
 
 Shared safeguards:

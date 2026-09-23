@@ -26,13 +26,29 @@ Managed Calendar IDs
 
 Use these exact IDs for routing, searches, reads, creates, and updates. Do not derive or guess an ID from a display name.
 
+### Authoritative calendar routing
 
+Apply this routing before every calendar search, read, create, update, delete, cancel, recurrence, or invitation-response action. Never fall back to the Google Calendar connector's default calendar.
 
+- Explicitly named `Perfect710` uses `perfect710\@gmail.com`. This is the only case in which `Perfect710` may be selected.
+- A family cue that mentions 小奇, 小果, 果果, or 诺诺 uses `family05788726987850932990\@group.calendar.google.com` (`Family`).
+- A work-related event must ask the user to choose one of `Bo Bozway` (`bo\@bozway.com`) or `Bo YW` (`bo\@you.world`) before preparing or executing a write. Do not choose between those two silently.
+- An explicit `Bo Bozway`, `Bo YW`, or `Family` calendar name is honored.
+- If no calendar is named, the event nature is not family or work-related, or the nature cannot be determined, use `Bo Bozway` (`bo\@bozway.com`) by default.
+- Family cues take precedence over a generic work/default classification. An explicitly named calendar takes precedence over inferred nature, except that `Perfect710` still requires the explicit name.
 
-Perfect710 / primary/default calendar: perfect710\@gmail.com
-Bo Bozway / Bozway work calendar: bo\@bozway.com
-Bo-YW / YW work calendar: bo\@you.world
-Family / shared family calendar: family05788726987850932990\@group.calendar.google.com
+The calendar name and exact ID selected by this table must be shown in every proposal and preview.
+
+### Authoritative event color routing
+
+Apply this rule to every create and modify proposal and to the actual calendar write; the preview must show the same color.
+
+1. If the start or end time is missing, approximate, unresolved, date-only, or otherwise uncertain, use **pink**. This rule has highest priority and overrides online/offline and location cues.
+2. If the time is definite and the user explicitly says online/线上, or gives neither online/offline nor a location, use **green**.
+3. If the time is definite and the user explicitly says offline/线下 or supplies an actual location, use **purple**.
+4. Resolve the live Google Calendar palette to the named pink, green, or purple color before writing; never use the connector's default color and never silently substitute blue or another color. If the named color is unavailable, report that exact mismatch and stop before the write.
+
+The color decision must be made from the original user-provided facts; do not infer an online/offline mode from unrelated text. If a field changes, recompute the color and re-render the proposal.
 
 
 
@@ -87,8 +103,10 @@ The preview gate is driven by semantic intent, not by a required template. Recog
 
 Use the attached `yuanbo-calendar-event-preview-template.png` as the visual base for every create or modify preview. Reuse its background, typography, icons, spacing, borders, controls, labels, and panel layout; overlay or replace only event-specific values and supported state. Do not generate, redesign, or substitute a new template for each request. The template's visual structure must remain recognizable, but its exact canvas size and aspect ratio are not a delivery requirement. If the template asset is unavailable or unreadable, ask the user to provide or re-upload it and stop before any calendar write.
 
-### Fixed preview fonts (additive)
+### Preview text rendering and font compatibility (authoritative)
 
-Render Chinese characters with **SimSun (宋体)** and English letters, Latin punctuation, and digits with **Times New Roman**. Treat these as fixed target faces: do not search the filesystem, download, install, or prepare font files. If an exact face is not already available, use the runtime's existing mapped system fallback immediately and continue without delaying, retrying, or reporting a font lookup blocker; preserve the template layout and all existing rendering rules.
+This section governs preview text rendering in the Agent runtime and overrides any older named-font wording. Preserve every user-provided title, location, note, conflict text, calendar name, and other value verbatim; do not translate, transliterate, romanize, or replace it. Segment mixed-language strings by script. Prefer **Noto Sans CJK SC** for Chinese characters and **Times New Roman** for English letters, Latin punctuation, and digits. If either named face is unavailable in the Agent renderer, use its built-in CJK-capable/system mapped fallback immediately; do not search the local filesystem, download or install fonts, retry solely for a font choice, or block the preview. Never use a Latin-only fallback that renders Chinese as square/tofu/missing-glyph boxes.
+
+Use this fixed preview type scale for every create/modify preview: event title 24 px; date/time, timezone, location, calendar name, description, conflict text, field values, labels, and controls 14 px; helper/status text 12 px; line-height 1.4. Keep the template's existing spacing and alignment. Inspect the actual PNG before sending; if Chinese glyphs are unreadable, regenerate only the text layer once with the renderer's built-in CJK-capable fallback while preserving the template and event values. A named-font mismatch alone is never a blocker: if the generated PNG is readable, send it as-is, ask for confirmation, and continue the normal calendar flow.
 
 For every create or modify operation, including natural-language, image-derived, and email-derived requests, the same assistant response that contains the actual PNG attachment must also contain the matching text confirmation prompt: `请回复：确认创建` for creation or `请回复：确认修改` for modification; English equivalents are allowed. This image-plus-text response is mandatory even when the user did not request an image. The text prompt is not a second write channel; wait for the user's next matching confirmation before writing.

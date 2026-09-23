@@ -21,6 +21,14 @@ For create/modify colors, uncertain time is pink with highest priority; with def
 modality/location is green, and offline or an actual location is purple. The preview and write must use
 the same resolved live-palette color.
 
+For create, update, delete, or cancel proposals, classify the direct confirmation reply as follows: after
+normalizing surrounding whitespace, case, and punctuation, `执行`, `开始`, `接受`, `确认`, `行`, `行的`, `好`, `好的`,
+`可以`, `yes`, `ok`, `同意`, `确认创建`, `确认修改`, `确认删除`, or `确认取消` (including a direct phrase such as
+`好的，执行`) confirms the immediately preceding proposal. Explicit refusal wins over any positive token:
+`不执行`, `不开始`, `不接受`, `不确认`, `不行`, `不行的`, `不好`, `不好的`, `不可以`, `no`, and the corresponding
+`不确认创建/修改/删除/取消` forms reject it and must not call a write tool. A reply with changed fields,
+no pending proposal, or neither clear polarity is not confirmation and requires a new question or proposal.
+
 Use yuanbo-calendar-onboarding only when its existing trigger requires missing durable defaults; do not restate or replace that Skill. Existing Yuanbo Memory, the connected Google Calendar account, and the target agent's original instructions remain authoritative for calendar identity, timezone, defaults, and persistence. Do not import another agent's account names, calendar IDs, mailbox, timezone, or defaults. If a required app or dependency is not attached, explain the exact gap and stop rather than substituting another account or writing directly.
 
 Shared safeguards:

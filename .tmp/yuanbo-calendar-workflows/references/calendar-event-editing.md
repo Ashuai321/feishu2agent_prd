@@ -43,9 +43,21 @@ The user's initial wording is never itself a write confirmation. Before invoking
 
 1. Finish all read-only discovery, exact-target checks, timezone resolution, conflict checks, and required-field validation.
 2. Present one complete proposal for the exact operation. For deletion/cancellation, show the complete event identity and the deletion scope, including whether a single occurrence or the whole series is affected.
-3. Ask for an operation-specific confirmation that refers to that immediately preceding proposal: `确认创建`, `确认修改`, `确认删除`, or `确认取消` (English equivalents are allowed).
-4. Invoke the write action only after the matching confirmation arrives. A vague acknowledgement, a new request, or a changed field is not confirmation; re-propose instead.
+3. Ask for a confirmation that refers to that immediately preceding proposal. The operation-specific forms
+   `确认创建`, `确认修改`, `确认删除`, or `确认取消` remain supported; the positive/negative response
+   classification below also applies to create, update, delete, and cancel proposals.
+4. Invoke the write action only after a positive confirmation classified below arrives. A new request or a changed field
+   is not confirmation; re-propose instead. A response classified as refusal must never call the write action.
 5. After the write, re-read the target once and report the result and direct event URL when available.
+
+For create, update, delete, or cancel proposals, a direct reply of `执行`, `开始`, `接受`, `确认`, `行`, `行的`, `好`, `好的`,
+`可以`, `yes`, `ok`, `同意`, `确认创建`, `确认修改`, `确认删除`, or `确认取消` confirms the immediately preceding
+proposal after surrounding whitespace, case, and punctuation are normalized. A direct phrase such as `好的，执行` also
+confirms it. Explicit refusal has priority over any positive token: `不执行`, `不开始`, `不接受`, `不确认`, `不行`,
+`不行的`, `不好`, `不好的`, `不可以`, `no`, or `不确认创建/修改/删除/取消` rejects the proposal and must not call a
+write tool, even if the same reply also contains `确认` or `可以`. A reply that changes fields, arrives without a pending
+proposal, or has neither clear polarity is not confirmation and requires a new question or proposal. This confirmation
+classification does not change discovery, conflict, preview, or write safeguards.
 
 For create or modify proposals that require a static PNG preview, the image shown in ChatGPT is not
 automatically delivered to Feishu/Lark. Call the relay MCP `send_image` with an actual HTTPS URL,

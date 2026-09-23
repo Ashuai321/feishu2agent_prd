@@ -2,8 +2,8 @@
 
 当前生产入口是 Cloudflare Python Worker：Feishu/Lark 事件、MCP/OAuth 和 Agent 回调都在
 Cloudflare 内完成。Worker 使用 D1 保存最小状态，Queue 处理后台任务，平台 API
-负责重新同步可恢复信息，R2 只保存必要文件。稳定公网域名保持为
-`https://bot.boooe.com`，不使用 `PYTHON_ORIGIN` 或 tunnel。
+负责重新同步可恢复信息，R2 只保存必要文件。正式环境公网域名为
+`https://mcp.0abt.com`，不使用 `PYTHON_ORIGIN` 或 tunnel。
 
 ## 架构
 
@@ -171,7 +171,7 @@ python -m scripts.xiaoc_group_mention_all --platform feishu --text "请确认收
 多维表格自动化在 `AI 分析` 后添加“发送 HTTP 请求”动作，POST 到：
 
 ```text
-https://bot.boooe.com/bitable/automation/webhook
+https://mcp.0abt.com/bitable/automation/webhook
 ```
 
 请求体可直接选择 AI 分析节点的结果/响应体变量，也可以发送 JSON。Worker 会提取常见
@@ -182,7 +182,7 @@ https://bot.boooe.com/bitable/automation/webhook
 
 ## Cloudflare Python Worker 部署
 
-生产入口是 `cloudflare_worker/src/entry.py`。它把飞书 Webhook、MCP/OAuth 和 Agent 回调都运行在 Cloudflare Python Worker 内部，不再使用 Python 源站，也不需要 `PYTHON_ORIGIN`。现有稳定域名继续使用 `https://bot.boooe.com`。
+生产入口是 `cloudflare_worker/src/entry.py`。它把飞书 Webhook、MCP/OAuth 和 Agent 回调都运行在 Cloudflare Python Worker 内部，不再使用 Python 源站，也不需要 `PYTHON_ORIGIN`。正式环境域名为 `https://mcp.0abt.com`。
 
 Worker 使用四类 Cloudflare 绑定：
 
@@ -225,12 +225,12 @@ npx wrangler secret put WORKSPACE_AGENT_RELAY_AGENT_TOKEN
 npx wrangler secret put WORKSPACE_AGENT_RELAY_OAUTH_LOGIN_TOKEN
 ```
 
-飞书用户 OAuth 默认回调地址为 `https://bot.boooe.com/feishu/oauth/callback`，请把它加入飞书应用的重定向地址白名单。若使用其他地址，再配置 `FEISHU_OAUTH_REDIRECT_URI`；授权入口为
-`https://bot.boooe.com/feishu/oauth/authorize`，回调会用 `code` 换取
+飞书用户 OAuth 默认回调地址为 `https://mcp.0abt.com/feishu/oauth/callback`，请把它加入飞书应用的重定向地址白名单。若使用其他地址，再配置 `FEISHU_OAUTH_REDIRECT_URI`；授权入口为
+`https://mcp.0abt.com/feishu/oauth/authorize`，回调会用 `code` 换取
 `user_access_token`。当前使用飞书 OAuth v3 令牌端点
 `https://accounts.feishu.cn/oauth/v3/token`，`state` 会保存在 D1 中并且只能使用一次。
 
-`WORKSPACE_AGENT_RELAY_PUBLIC_BASE_URL` 可不设置，代码默认使用 `https://bot.boooe.com`。
+`WORKSPACE_AGENT_RELAY_PUBLIC_BASE_URL` 可不设置；正式环境显式设为 `https://mcp.0abt.com`。
 `WORKSPACE_AGENT_RELAY_TRIGGER_URL` 是已发布 Workspace Agent 的触发地址，不是 Python 服务地址。
 `FEISHU_BOT_OPEN_ID` 是机器人自身的 `open_id`；部署前通过飞书的
 `GET /open-apis/bot/v3/info` 查询一次并保存。Worker 不会在事件请求内临时查询它，
@@ -239,13 +239,13 @@ npx wrangler secret put WORKSPACE_AGENT_RELAY_OAUTH_LOGIN_TOKEN
 飞书“开发者服务器”事件请求地址填写：
 
 ```text
-https://bot.boooe.com/feishu/events
+https://mcp.0abt.com/feishu/events
 ```
 
 Lark 应用填写：
 
 ```text
-https://bot.boooe.com/lark/events
+https://mcp.0abt.com/lark/events
 ```
 
 用户多维表格授权也按平台区分：Feishu 使用 `/feishu/oauth/authorize`，Lark 使用
@@ -263,7 +263,7 @@ https://bot.boooe.com/lark/events
 ChatGPT 连接器的 MCP 地址填写：
 
 ```text
-https://bot.boooe.com/mcp
+https://mcp.0abt.com/mcp
 ```
 
 `Yuanbo Calendar Manager` 使用同一条飞书交互链路：触发输入会携带

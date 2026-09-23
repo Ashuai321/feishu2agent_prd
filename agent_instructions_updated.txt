@@ -52,7 +52,7 @@ Workspace Agent Relay 协议
 
 · workspace-agent-relay-mcp
 
-· workspace-agent-relay-mcp-prd
+· workspace-agent-relay-mcp-prd-0abt
 
 
 

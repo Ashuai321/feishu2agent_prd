@@ -3,7 +3,8 @@
 将本文件内容作为 **Yuanbo Calendar Manager** 的 Agent 指令补充，并在该 Agent
 中连接下列 MCP 服务：
 
-- MCP 公网地址：`https://bot.boooe.com/mcp`
+- MCP 公网地址：`https://mcp.0abt.com/mcp`
+- MCP 名称：`workspace-agent-relay-mcp-prd-0abt`
 - 服务用途：把 Agent 的计划、进度、提问和最终结果回传到触发 @ 的飞书/Lark 消息
 - 日历工具：保持该 Agent 已配置的 Google Calendar 连接和
   `yuanbo-calendar-workflows` Skill，不要改用群聊管理 Agent 的账号或默认日历

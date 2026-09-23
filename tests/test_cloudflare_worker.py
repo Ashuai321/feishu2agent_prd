@@ -1159,6 +1159,18 @@ def test_worker_config_points_directly_to_python_entrypoint():
     config = json.loads((ROOT / "wrangler.jsonc").read_text())
 
     assert config["main"] == "cloudflare_worker/src/entry.py"
+    assert config["vars"]["FEISHU_OAUTH_REDIRECT_URI"] == (
+        "https://mcp.0abt.com/feishu/oauth/callback"
+    )
+    assert config["vars"]["LARK_OAUTH_REDIRECT_URI"] == (
+        "https://mcp.0abt.com/lark/oauth/callback"
+    )
+    assert config["vars"]["WORKSPACE_AGENT_RELAY_PUBLIC_BASE_URL"] == (
+        "https://mcp.0abt.com"
+    )
+    assert config["vars"]["WORKSPACE_AGENT_RELAY_MCP_NAME"] == (
+        "workspace-agent-relay-mcp-prd-0abt"
+    )
     assert "python_workers" in config["compatibility_flags"]
     assert {item["binding"] for item in config["d1_databases"]} == {"DB"}
     assert config["queues"]["producers"][0]["binding"] == "AGENT_QUEUE"

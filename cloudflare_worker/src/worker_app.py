@@ -2580,6 +2580,9 @@ class CloudflareRelay:
     def base_url(self) -> str:
         return _env(self.env, "WORKSPACE_AGENT_RELAY_PUBLIC_BASE_URL", PUBLIC_BASE_URL).rstrip("/")
 
+    def mcp_name(self) -> str:
+        return _env(self.env, "WORKSPACE_AGENT_RELAY_MCP_NAME", MCP_NAME).strip() or MCP_NAME
+
     def scopes(self) -> list[str]:
         return (
             _env(self.env, "WORKSPACE_AGENT_RELAY_OAUTH_SCOPES", "workspace-agent-relay").split()
@@ -2897,7 +2900,7 @@ class CloudflareRelay:
                     "authorization_servers": [base],
                     "scopes_supported": self.scopes(),
                     "bearer_methods_supported": ["header"],
-                    "resource_name": MCP_NAME,
+                    "resource_name": self.mcp_name(),
                 }
             )
         if path == "/oauth/register" and request.method == "POST":
@@ -3105,12 +3108,12 @@ class CloudflareRelay:
                 result = {
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": MCP_NAME, "version": "3.0.0"},
+                    "serverInfo": {"name": self.mcp_name(), "version": "3.0.0"},
                     "instructions": (
                         "Use record_plan, record_progress and record_result for every relay turn. "
                         "If input is required, use ask_user; it delivers the question to the "
                         "current Feishu/Lark reply and keeps the run resumable. "
-                        f"The relay name is {MCP_NAME}."
+                        f"The relay name is {self.mcp_name()}."
                     ),
                 }
             elif method == "ping":
@@ -3560,7 +3563,7 @@ class CloudflareRelay:
             return self._tool_result(
                 {
                     "success": True,
-                    "app_name": MCP_NAME,
+                    "app_name": self.relay.mcp_name(),
                     "version": "3.0.0",
                     "public_base_url": self.base_url(),
                     "storage": "D1",
@@ -4329,7 +4332,7 @@ class CloudflareRelay:
                         "Content-Type": "application/json",
                         "Idempotency-Key": str(body.get("idempotency_key") or request_id),
                         "OpenAI-Beta": TRIGGER_RUNS_BETA,
-                        "User-Agent": f"{MCP_NAME}/3.0",
+                        "User-Agent": f"{self.mcp_name()}/3.0",
                     },
                     json={
                         "conversation_key": run["conversation_key"],
@@ -4621,7 +4624,7 @@ class Default(WorkerEntrypoint):
             return _response(
                 {
                     "ok": True,
-                    "service": MCP_NAME,
+                    "service": relay.mcp_name(),
                     "endpoints": [
                         BITABLE_AUTOMATION_WEBHOOK_PATH,
                         "/feishu/events",

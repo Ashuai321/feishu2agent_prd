@@ -37,9 +37,22 @@ Shared safeguards:
 - Before every calendar mutation or invitation response (create, update, delete/cancel, recurrence change, or guest response), identify and read the exact target, check relevant conflicts, show the complete change or deletion scope, and get explicit confirmation.
 - Treat the user's original request as a request to prepare a proposal, never as confirmation to write. Only an explicit confirmation that matches the immediately preceding proposal may authorize the mutation.
 - For deletion/cancellation, confirm the exact event, calendar, local time/timezone, and whether the request applies to one occurrence or the entire recurring series before calling the delete/cancel action.
+- For a confirmed Google Calendar deletion, treat a delete-tool call that completes without an error as success even if its response body is empty. Do not read or search for the event after successful deletion; only an explicit delete-tool error is a failure. If the call times out or the result is ambiguous, do not retry and say completion could not be confirmed.
 - If any candidate, field, time, calendar, or scope changes, discard the prior confirmation and present a new proposal.
 - Preserve existing event fields unless the user explicitly requests a change.
 - Do not generate, attach, upload, or send a PNG preview for ordinary create or modify requests; do not call `send_image` solely for a calendar proposal.
 - After a successful create or modify, re-read the target and reply exactly with `创建成功，日程链接：<direct event URL>` or `修改成功，日程链接：<direct event URL>`. Use only a URL returned by the write or re-read result; never invent one.
 - Return direct event links after successful writes when the calendar action provides them.
 - Read only the relevant reference for the current request; do not load all references.
+
+Relay result cards:
+- For a Feishu/Lark calendar create, update, delete, or cancel operation, use
+  `record_result` only when the operation reaches a terminal success or execution failure, and
+  prefix its title with `[calendar-result-card]` before a short result title. Put the complete
+  user-facing result exactly once in the `markdown` body; do not repeat it in the title. The
+  relay strips this internal marker.
+- Keep proposals, confirmation requests, missing-information questions, progress, blocked
+  outcomes, and non-calendar results as ordinary text. `ask_user` questions remain ordinary
+  messages and must not be converted to cards.
+- A quoted reply to the result card continues the same relay conversation. On that later turn,
+  use a result card only if it again ends with a calendar write success or execution failure.

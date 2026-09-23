@@ -35,7 +35,7 @@ Resolve the live Google Calendar palette for the named color. Never use the conn
 9. Apply the authoritative color routing above. Resolve the live palette; never guess IDs.
 10. For recurrence, prefer a finite series when cadence repeats; calculate occurrence dates and counts, split series when times differ, and ask when allocation is ambiguous.
 11. Final confirmation must state create, modify, delete, or cancel, target calendar, local date/time/timezone, recurrence/counts and deletion scope where relevant, Location, guests, color, and every field that will change.
-12. After success, report the result and direct event URL; if no URL is returned, re-read once when possible and never invent one.
+12. After a successful create or update, report the direct event URL; if the write returns no URL, re-read once when possible and never invent one. After a successful deletion, do not re-read the deleted event; follow the deletion verification rule below.
 
 ### Explicit mutation confirmation gate
 
@@ -48,7 +48,7 @@ The user's initial wording is never itself a write confirmation. Before invoking
    classification below also applies to create, update, delete, and cancel proposals.
 4. Invoke the write action only after a positive confirmation classified below arrives. A new request or a changed field
    is not confirmation; re-propose instead. A response classified as refusal must never call the write action.
-5. After the write, re-read the target once and report the result and direct event URL when available.
+5. After a successful create or update, re-read the target once when needed for its direct event URL. For a successful deletion, do not re-read the deleted event; follow the deletion verification rule below.
 
 For create, update, delete, or cancel proposals, a direct reply of `执行`, `开始`, `接受`, `确认`, `行`, `行的`, `好`, `好的`,
 `可以`, `yes`, `ok`, `同意`, `确认创建`, `确认修改`, `确认删除`, or `确认取消` confirms the immediately preceding
@@ -62,6 +62,23 @@ classification does not change discovery, conflict, or write safeguards.
 For ordinary create or modify proposals, do not render, generate, attach, upload, or send a PNG preview. Do not call the relay MCP `send_image` solely for a calendar proposal. Keep the complete operation details in the text proposal and ask for the matching confirmation. User-provided itinerary images and image-to-event extraction remain governed by `references/pic-to-event.md`; this no-preview rule concerns only generated calendar previews.
 
 After a successful create or modify, re-read the target once and reply exactly with `创建成功，日程链接：<direct event URL>` or `修改成功，日程链接：<direct event URL>`. The URL must come from the write result or the successful re-read; never invent one. If the connected calendar tool returns no direct URL, state that the URL is unavailable instead of substituting an ID or Markdown link.
+
+For a confirmed Google Calendar deletion, a delete-tool call that completes without an error is success even if the response body is empty; the Google Calendar delete API returns an empty body on success. Do not read or search for the event after a successful deletion, and do not let a stale post-delete read override the delete response. Report failure only for an explicit delete-tool error. If the call times out or its outcome is otherwise ambiguous, do not retry; say completion could not be confirmed.
+
+## Feishu/Lark final result cards
+
+In Relay mode, after a calendar create, modify, delete, or cancel operation has finished, send its
+terminal success or execution-failure result through `record_result` and prefix its title with
+`[calendar-result-card]` before a short result title. Put the complete user-facing result exactly
+once in the `markdown` body; do not repeat it in the title. The relay strips this internal marker
+and sends a message card containing the result. For successful create/modify, the exact
+success line above belongs in the card body. Use `status="done"` for success and
+`status="failed"` for an execution failure. Do not use cards for proposals, confirmations,
+questions, progress, blocked outcomes, or other interactions; those remain ordinary text or
+`ask_user` messages. Do not use the title marker for non-calendar results. A reply quoting the
+result card continues the same conversation; on continuation, use a card again only if that turn
+itself ends with a calendar write success or execution failure. In ordinary ChatGPT conversations,
+keep the existing text response behavior.
 
 ## Guardrails
 Every historical modification, deletion/cancellation, new creation, recurrence mutation, and invitation response requires confirmation. Do not infer criticality, uncertainty, meeting type, timezone, attendees, reminders, conferencing, recurrence, visibility, deletion scope, or other field changes. For recurring updates or deletions, ask whether the change is one occurrence or the series. If a requested palette color is unavailable, explain the mismatch and ask before proceeding.

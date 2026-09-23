@@ -10,6 +10,7 @@ import json
 import re
 import secrets
 import time
+import uuid as uuid_module
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -23,6 +24,7 @@ MCP_PATH = "/mcp"
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_NAME = "workspace-agent-relay-mcp-dev"
 PLACEHOLDER = "正在处理，Agent 完成后会回复到这条消息。"
+CALENDAR_RESULT_CARD_TITLE_PREFIX = "[calendar-result-card]"
 MAX_CLIENTS = 50
 TRIGGER_RUNS_BETA = "workspace_agent_runs=v1"
 BITABLE_AUTOMATION_WEBHOOK_PATH = "/bitable/automation/webhook"
@@ -35,7 +37,14 @@ CALENDAR_CONFIRMATION_GATE = (
     "local time/timezone, changed fields, and deletion or recurrence scope, then ask for an "
     "operation-specific explicit confirmation (确认创建/确认修改/确认删除/确认取消 or an "
     "English equivalent). Invoke the write tool only after the matching confirmation for the "
-    "immediately preceding proposal; if anything changes, re-propose. Re-read after success. "
+    "immediately preceding proposal; if anything changes, re-propose. Re-read successful creates "
+    "and updates when needed for the returned event URL. For a confirmed Google Calendar delete, "
+    "a delete tool call that completes without an error is success even when its response body is "
+    "empty; the Google Calendar delete API returns an empty body on success. Do not read or search "
+    "for the event after a successful delete, and do not let a stale post-delete read override the "
+    "successful delete response. Report failure only for an explicit delete-tool error. If the "
+    "delete call times out or its outcome is otherwise ambiguous, do not retry; say completion "
+    "could not be confirmed and use status=blocked. "
     "If a calendar preview or other Agent image is produced, call the relay send_image tool "
     "with image_base64 or a base64 data URL whenever possible; use an HTTPS URL only when it "
     "is publicly downloadable. Never pass a ChatGPT-side attachment, private, or expiring URL. "
@@ -44,6 +53,45 @@ CALENDAR_CONFIRMATION_GATE = (
     "withhold a successfully rendered image only because its pixel dimensions or aspect ratio "
     "differs from the reference; send the generated image as-is."
 )
+CALENDAR_RESULT_REPLY_FORMAT = (
+    "For a Feishu/Lark calendar create, modify, delete, or cancel operation, return a final "
+    "success or execution-failure result through record_result with the title prefixed by "
+    f"{CALENDAR_RESULT_CARD_TITLE_PREFIX!r}, followed by a short result label. Put the complete "
+    "user-facing result exactly once in markdown; do not repeat it in the title. Use this only after the write has "
+    "finished successfully or failed; keep proposals, confirmation requests, questions, "
+    "other interactions, progress, blocked outcomes, and non-calendar results as ordinary "
+    "text without that title marker. On a later turn, use a card again "
+    "only if that turn itself ends with a calendar create/modify/delete/cancel success or failure. "
+    "An empty response body from a completed Google Calendar delete call is a successful deletion, "
+    "not an execution failure; do not post-read or search after it. Use status=failed only for an "
+    "explicit delete-tool error, and status=blocked with ordinary text for an ambiguous timeout; "
+    "never retry an ambiguous delete."
+)
+
+
+def _compose_result_body(title: str, markdown: str) -> str:
+    """Join result fields without repeating a complete result stored in both."""
+    title = str(title or "").strip()
+    markdown = str(markdown or "").strip()
+    if not title:
+        return markdown
+    if not markdown:
+        return title
+    normalized_title = re.sub(r"\s+", " ", title).strip()
+    normalized_markdown = re.sub(r"\s+", " ", markdown).strip()
+    if normalized_title == normalized_markdown:
+        return markdown
+    return f"{title}\n{markdown}"
+
+
+def _calendar_result_idempotency_uuid(request_id: str) -> str:
+    """Return one stable Feishu message UUID for retries of this result delivery."""
+    return str(
+        uuid_module.uuid5(
+            uuid_module.NAMESPACE_URL,
+            f"feishu2agents:calendar-result:{request_id}",
+        )
+    )
 
 
 def _format_user_question(question: Any, choices: Any = None) -> str:
@@ -1327,7 +1375,9 @@ class FeishuAPI:
             raise RuntimeError("Feishu image reply response returned no message_id")
         return str(outbound)
 
-    async def reply_card(self, message_id: str, card: dict[str, Any]) -> str:
+    async def reply_card(
+        self, message_id: str, card: dict[str, Any], *, uuid: str | None = None
+    ) -> str:
         """Reply with an interactive card.
 
         Feishu and Lark use the same interactive-message endpoint.  Keeping
@@ -1335,11 +1385,14 @@ class FeishuAPI:
         being exposed as a chat link while still opening it in the platform's
         in-app web view after the user taps the button.
         """
+        body = {"msg_type": "interactive", "content": _json(card)}
+        if uuid:
+            body["uuid"] = str(uuid)
         payload = await self._request(
             "POST",
             f"/open-apis/im/v1/messages/{message_id}/reply",
             params={"user_id_type": "open_id"},
-            json={"msg_type": "interactive", "content": _json(card)},
+            json=body,
         )
         outbound = payload.get("data", {}).get("message_id")
         if not outbound:
@@ -1727,10 +1780,9 @@ def _normalize_event(
             if key:
                 text = re.sub(re.escape(str(key)), "", text)
     text = text.strip()
-    # The bot must be explicitly @mentioned for every request.  When that
-    # mention is attached to a reply quoting one of our messages, the handler
-    # uses the parent mapping to continue the existing conversation; a fresh
-    # @mention without a mapped parent starts a new conversation.
+    # New requests must explicitly @mention the bot. Replies can omit the
+    # mention when they quote a bot message; the event handler later accepts
+    # those only when that parent message is mapped to an existing conversation.
     if (not mentioned_bot and not (allow_unmentioned_reply and parent_id)) or (
         not text and not image_keys
     ):
@@ -1793,6 +1845,7 @@ def _conversation_input(
                 "to carry out the user's request, then call the relay MCP record_result so the answer "
                 "is returned to the quoted Feishu message."
             ),
+            CALENDAR_RESULT_REPLY_FORMAT,
             CALENDAR_CONFIRMATION_GATE,
             f"The relay MCP server is {relay_name} at {relay_base_url.rstrip('/')}{MCP_PATH}; call record_result there before ending the turn.",
             "",
@@ -1807,6 +1860,7 @@ def _conversation_input(
             "After reading the user task, call update_conversation_title once for a new conversation, then record_plan with a user-visible step plan.",
             "After completing several steps, call record_progress with step_updates.",
             "Call record_result exactly once when this turn is truly over: status=done when delivered, status=failed on an execution error, status=blocked only for an external hard blocker.",
+            CALENDAR_RESULT_REPLY_FORMAT,
             CALENDAR_CONFIRMATION_GATE,
             (
                 f"The relay MCP server is {relay_name} at {relay_base_url.rstrip('/')}{MCP_PATH}. "
@@ -4401,8 +4455,12 @@ class CloudflareRelay:
             return
         status = str(run.get("status") or "done")
         title = str(run.get("title") or "").strip()
+        reply_format = "text"
+        if title.startswith(CALENDAR_RESULT_CARD_TITLE_PREFIX):
+            reply_format = "card"
+            title = title[len(CALENDAR_RESULT_CARD_TITLE_PREFIX):].lstrip(" :：\t")
         markdown = str(run.get("markdown") or "").strip()
-        body = "\n".join(item for item in (title, markdown) if item).strip()
+        body = _compose_result_body(title, markdown)
         if status == "failed":
             text = f"Agent 任务失败：{body or '未提供失败原因'}"
         elif status == "blocked":
@@ -4410,6 +4468,55 @@ class CloudflareRelay:
         else:
             text = body or "Agent 已完成，但未返回内容。"
         try:
+            if reply_format == "card" and status in {"done", "failed"}:
+                header = "日程操作成功" if status == "done" else "日程操作失败"
+                card = {
+                    "config": {"wide_screen_mode": True},
+                    "header": {
+                        "template": "green" if status == "done" else "red",
+                        "title": {"tag": "plain_text", "content": header},
+                    },
+                    "elements": [
+                        {
+                            "tag": "div",
+                            "text": {
+                                "tag": "lark_md",
+                                "content": body or header,
+                            },
+                        }
+                    ],
+                }
+                outbound = await self.api_for_conversation(
+                    str(run["conversation_key"])
+                ).reply_card(
+                    str(run["source_message_id"]),
+                    card,
+                    uuid=_calendar_result_idempotency_uuid(request_id),
+                )
+                await self.state.save_reply(outbound, str(run["conversation_key"]))
+                await _db_run(
+                    self.state.db,
+                    "UPDATE relay_runs SET delivered = 1, updated_at = ? WHERE request_id = ?",
+                    _now(),
+                    request_id,
+                )
+                placeholder = str(run.get("placeholder_message_id") or "")
+                if placeholder:
+                    try:
+                        message = (
+                            "日程操作已完成，结果见下方消息卡片。"
+                            if status == "done"
+                            else "日程操作未完成，详情见下方消息卡片。"
+                        )
+                        await self.api_for_conversation(
+                            str(run["conversation_key"])
+                        ).update(placeholder, message)
+                    except Exception as exc:
+                        print(
+                            "Feishu placeholder update after card delivery failed: "
+                            f"{_safe_error(exc)}"
+                        )
+                return
             placeholder = str(run.get("placeholder_message_id") or "")
             if placeholder:
                 try:
@@ -4529,17 +4636,21 @@ class CloudflareRelay:
                 else {}
             )
             target_chat_id = str(raw_message.get("chat_id") or "")
+            parent_id = str(raw_message.get("parent_id") or raw_message.get("root_id") or "")
+            is_bitable_group = self.bitable_workflow.is_target_group(target_chat_id)
             event = _normalize_event(
                 body,
                 bot_id,
-                allow_unmentioned_reply=self.bitable_workflow.is_target_group(
-                    target_chat_id
-                ),
+                allow_unmentioned_reply=is_bitable_group or bool(parent_id),
             )
             if event is None or not event["open_id"]:
                 return _response({"code": 0})
             parent = event["parent_id"]
             conversation_key = await self.state.reply_conversation(parent) if parent else None
+            if not event["mentioned_bot"] and not conversation_key and not is_bitable_group:
+                # A reply without @ is a continuation only when it quotes a
+                # message this Worker previously bound to a conversation.
+                return _response({"code": 0})
             if not conversation_key:
                 conversation_key = f"{normalized}:{_env(self.env, f'{prefix}_APP_ID')}:{event['chat_id']}:{secrets.token_hex(6)}"
             request_id = _request_id(normalized)

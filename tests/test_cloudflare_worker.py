@@ -282,6 +282,82 @@ def test_target_group_can_continue_with_a_quoted_reply_without_new_mention():
     assert event["parent_id"] == "om_bot_card"
 
 
+def test_unmentioned_reply_to_a_mapped_result_card_resumes_the_same_conversation():
+    worker = _load_worker_module()
+
+    class FakeQueue:
+        def __init__(self):
+            self.messages = []
+
+        async def send(self, body):
+            self.messages.append(body)
+
+    class FakeState:
+        db = object()
+
+        async def reply_conversation(self, parent_id):
+            assert parent_id == "om_result_card"
+            return "feishu:app:chat:existing"
+
+        async def ensure_schema(self):
+            pass
+
+        async def claim_event(self, **fields):
+            self.claimed = fields
+            return True
+
+        async def save_requester(self, *fields):
+            self.requester = fields
+
+        async def previous_run_exists(self, conversation_key):
+            assert conversation_key == "feishu:app:chat:existing"
+            return True
+
+        async def create_run(self, **fields):
+            self.created = fields
+
+    queue = FakeQueue()
+    state = FakeState()
+    env = SimpleNamespace(
+        FEISHU_BOT_OPEN_ID="ou_bot",
+        FEISHU_APP_ID="app",
+        AGENT_QUEUE=queue,
+    )
+    relay = worker.CloudflareRelay(env, None, state)
+    body = _event(
+        "text",
+        {"text": "请继续"},
+        text_mention=False,
+        parent_id="om_result_card",
+    )
+
+    asyncio.run(relay._process_feishu_event(body, "feishu"))
+
+    assert state.created["conversation_key"] == "feishu:app:chat:existing"
+    assert "turn_mode: continuation" in state.created["input_markdown"]
+    assert queue.messages[0]["kind"] == "agent"
+
+def test_unmentioned_reply_to_an_unmapped_message_is_ignored_outside_target_group():
+    worker = _load_worker_module()
+
+    class FakeState:
+        async def reply_conversation(self, parent_id):
+            return None
+
+    relay = worker.CloudflareRelay(
+        SimpleNamespace(FEISHU_BOT_OPEN_ID="ou_bot", FEISHU_APP_ID="app"),
+        None,
+        FakeState(),
+    )
+    body = _event(
+        "text",
+        {"text": "不要开始新会话"},
+        text_mention=False,
+        parent_id="om_not_from_this_bot",
+    )
+
+    asyncio.run(relay._process_feishu_event(body, "feishu"))
+
 def test_worker_keeps_parent_for_an_mentioned_reply():
     worker = _load_worker_module()
 
@@ -874,6 +950,7 @@ def test_agent_input_uses_text_relay_envelope():
         conversation_key="feishu:app:chat:1",
         text="测试",
         continuation=False,
+        relay_name="workspace-agent-relay-mcp-prd",
     )
 
     assert input_text.startswith(
@@ -887,6 +964,10 @@ def test_agent_input_uses_text_relay_envelope():
     assert "User task:\n测试" in input_text
     assert "https://bot.boooe.com/mcp" in input_text
     assert "record_result" in input_text
+    assert "[calendar-result-card]" in input_text
+    assert "a delete tool call that completes without an error is success even when its response body is empty" in input_text
+    assert "Do not read or search for the event after a successful delete" in input_text
+    assert "never retry an ambiguous delete" in input_text
     assert "The user's original request is never confirmation" in input_text
     assert "确认创建/确认修改/确认删除/确认取消" in input_text
     assert "never reject or withhold a successfully rendered image" in input_text
@@ -1127,6 +1208,209 @@ def test_result_delivery_updates_a_plain_text_placeholder_in_place():
     assert relay.feishu.updates == [("om_placeholder", "完成\n结果正文")]
     assert state.saved == ("om_placeholder", "feishu:app:chat:x")
 
+
+def test_record_result_card_marker_uses_the_existing_title_field():
+    worker = _load_worker_module()
+
+    class FakeQueue:
+        def __init__(self):
+            self.messages = []
+
+        async def send(self, body):
+            self.messages.append(body)
+
+    class FakeState:
+        async def get_run(self, request_id):
+            return {
+                "request_id": request_id,
+                "conversation_key": "feishu:app:chat:1",
+                "completed_at": None,
+            }
+
+        async def update_run(self, request_id, **fields):
+            self.updated = (request_id, fields)
+
+    queue = FakeQueue()
+    state = FakeState()
+    relay = worker.CloudflareRelay(SimpleNamespace(AGENT_QUEUE=queue), None, state)
+    result_tool = next(item for item in relay.tool_definitions() if item["name"] == "record_result")
+    assert "reply_format" not in result_tool["inputSchema"]["properties"]
+    result = asyncio.run(
+        relay.call_tool(
+            "record_result",
+            {
+                "request_id": "req_1",
+                "conversation_key": "feishu:app:chat:1",
+                "status": "done",
+                "title": "[calendar-result-card] 创建成功",
+                "markdown": "日程链接：<https://calendar.google.com/event?id=evt_1>",
+            },
+        )
+    )
+
+    assert result["isError"] is False
+    assert state.updated[1]["title"] == "[calendar-result-card] 创建成功"
+    assert state.updated[1]["status"] == "done"
+    assert queue.messages == [{"kind": "deliver_result", "request_id": "req_1"}]
+
+def test_result_delivery_sends_a_success_card_and_binds_replies_to_the_conversation():
+    worker = _load_worker_module()
+
+    class FakeState:
+        db = object()
+
+        async def get_run(self, request_id):
+            return {
+                "request_id": request_id,
+                "source_message_id": "om_source",
+                "placeholder_message_id": "om_placeholder",
+                "status": "done",
+                "title": "[calendar-result-card] 创建成功，日程链接：https://calendar.google.com/event?id=evt_1",
+                "markdown": "创建成功，日程链接：https://calendar.google.com/event?id=evt_1",
+                "delivered": 0,
+                "conversation_key": "feishu:app:chat:x",
+            }
+
+        async def save_reply(self, outbound_id, conversation_key):
+            self.saved = (outbound_id, conversation_key)
+
+    class FakeFeishu:
+        def __init__(self):
+            self.cards = []
+            self.updates = []
+
+        async def reply_card(self, message_id, card, *, uuid=None):
+            self.cards.append((message_id, card, uuid))
+            return "om_result_card"
+
+        async def update(self, message_id, text):
+            self.updates.append((message_id, text))
+
+    db_updates = []
+
+    async def fake_db_run(db, sql, *params):
+        db_updates.append((sql, params))
+
+    worker._db_run = fake_db_run
+    state = FakeState()
+    relay = worker.CloudflareRelay(SimpleNamespace(), None, state)
+    relay.feishu = FakeFeishu()
+
+    asyncio.run(relay.deliver_result("req_1"))
+
+    assert relay.feishu.cards[0][0] == "om_source"
+    card = relay.feishu.cards[0][1]
+    assert relay.feishu.cards[0][2] == worker._calendar_result_idempotency_uuid("req_1")
+    assert card["header"]["template"] == "green"
+    assert card["header"]["title"]["content"] == "日程操作成功"
+    body = card["elements"][0]["text"]["content"]
+    assert body == "创建成功，日程链接：https://calendar.google.com/event?id=evt_1"
+    assert body.count("https://calendar.google.com/event?id=evt_1") == 1
+    assert state.saved == ("om_result_card", "feishu:app:chat:x")
+    assert relay.feishu.updates == [("om_placeholder", "日程操作已完成，结果见下方消息卡片。")]
+    assert db_updates and db_updates[0][1][-1] == "req_1"
+
+def test_failed_calendar_result_uses_a_red_card():
+    worker = _load_worker_module()
+
+    class FakeState:
+        db = object()
+
+        async def get_run(self, request_id):
+            return {
+                "request_id": request_id,
+                "source_message_id": "om_source",
+                "status": "failed",
+                "title": "[calendar-result-card] 修改失败",
+                "markdown": "日程未修改。",
+                "delivered": 0,
+                "conversation_key": "feishu:app:chat:x",
+            }
+
+        async def save_reply(self, outbound_id, conversation_key):
+            self.saved = (outbound_id, conversation_key)
+
+    class FakeFeishu:
+        def __init__(self):
+            self.cards = []
+
+        async def reply_card(self, message_id, card, *, uuid=None):
+            self.cards.append((message_id, card, uuid))
+            return "om_failed_result_card"
+
+    async def noop_db_run(*args, **kwargs):
+        return None
+
+    worker._db_run = noop_db_run
+    state = FakeState()
+    relay = worker.CloudflareRelay(SimpleNamespace(), None, state)
+    relay.feishu = FakeFeishu()
+
+    asyncio.run(relay.deliver_result("req_1"))
+
+    assert relay.feishu.cards[0][1]["header"]["template"] == "red"
+    assert relay.feishu.cards[0][1]["header"]["title"]["content"] == "日程操作失败"
+    assert relay.feishu.cards[0][2] == worker._calendar_result_idempotency_uuid("req_1")
+    assert state.saved == ("om_failed_result_card", "feishu:app:chat:x")
+
+
+def test_reply_card_sends_a_stable_uuid_when_provided():
+    worker = _load_worker_module()
+    api = worker.FeishuAPI(SimpleNamespace())
+    requests = []
+
+    async def fake_request(method, path, **kwargs):
+        requests.append((method, path, kwargs))
+        return {"data": {"message_id": "om_card"}}
+
+    api._request = fake_request
+    card = {"header": {"title": {"content": "日程操作成功"}}}
+
+    result = asyncio.run(api.reply_card("om_source", card, uuid="stable-result-uuid"))
+
+    assert result == "om_card"
+    assert requests[0][2]["json"]["uuid"] == "stable-result-uuid"
+
+def test_blocked_result_uses_text_even_when_card_format_was_requested():
+    worker = _load_worker_module()
+
+    class FakeState:
+        db = object()
+
+        async def get_run(self, request_id):
+            return {
+                "request_id": request_id,
+                "source_message_id": "om_source",
+                "status": "blocked",
+                "title": "[calendar-result-card] 缺少日历权限",
+                "markdown": "请重新授权。",
+                "delivered": 0,
+                "conversation_key": "feishu:app:chat:x",
+            }
+
+        async def save_reply(self, outbound_id, conversation_key):
+            self.saved = (outbound_id, conversation_key)
+
+    class FakeFeishu:
+        def __init__(self):
+            self.replies = []
+
+        async def reply(self, message_id, text):
+            self.replies.append((message_id, text))
+            return "om_result_text"
+
+    async def noop_db_run(*args, **kwargs):
+        return None
+
+    worker._db_run = noop_db_run
+    state = FakeState()
+    relay = worker.CloudflareRelay(SimpleNamespace(), None, state)
+    relay.feishu = FakeFeishu()
+
+    asyncio.run(relay.deliver_result("req_1"))
+
+    assert relay.feishu.replies == [("om_source", "Agent 任务被阻塞：缺少日历权限\n请重新授权。")]
+    assert state.saved == ("om_result_text", "feishu:app:chat:x")
 
 def test_result_delivery_falls_back_to_a_new_reply_when_edit_fails():
     worker = _load_worker_module()

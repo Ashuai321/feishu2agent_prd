@@ -995,6 +995,22 @@ def test_cloudflare_mcp_sends_agent_image_as_a_message_reply():
     assert state.saved == ("om_image_reply", "feishu:app:chat:1")
 
 
+def test_agent_image_base64_takes_precedence_over_private_attachment_url():
+    worker = _load_worker_module()
+    image = b"\x89PNG\r\n\x1a\nagent-image"
+
+    data = asyncio.run(
+        worker.CloudflareRelay._image_bytes_from_args(
+            {
+                "image_url": "https://chatgpt.com/private/attachment-that-is-not-public",
+                "image_base64": base64.b64encode(image).decode("ascii"),
+            }
+        )
+    )
+
+    assert data == image
+
+
 def test_record_result_forwards_structured_agent_image_before_text_result():
     worker = _load_worker_module()
     image = b"\x89PNG\r\n\x1a\nagent-image"

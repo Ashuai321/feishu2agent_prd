@@ -3168,7 +3168,23 @@ class CloudflareRelay:
         image_url = str(raw_url).strip()
         image_base64 = str(raw_base64).strip()
         data: bytes
-        if image_url.startswith("data:"):
+        # Prefer the self-contained payload whenever it is present.  Agent
+        # image results may include both a private ChatGPT attachment URL and
+        # its base64 bytes; the URL can return 401/403 outside ChatGPT while
+        # the base64 payload is already ready for relay upload.
+        if image_base64:
+            if image_base64.startswith("data:"):
+                try:
+                    _, encoded = image_base64.split(",", 1)
+                except ValueError as exc:
+                    raise ValueError("image_base64 data URL is malformed") from exc
+            else:
+                encoded = image_base64
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except (ValueError, base64.binascii.Error) as exc:
+                raise ValueError("image_base64 contains invalid base64") from exc
+        elif image_url.startswith("data:"):
             try:
                 header, encoded = image_url.split(",", 1)
             except ValueError as exc:
@@ -3208,18 +3224,6 @@ class CloudflareRelay:
                     "for private/expiring Agent attachments"
                 )
             data = response.content
-        elif image_base64:
-            if image_base64.startswith("data:"):
-                try:
-                    _, encoded = image_base64.split(",", 1)
-                except ValueError as exc:
-                    raise ValueError("image_base64 data URL is malformed") from exc
-            else:
-                encoded = image_base64
-            try:
-                data = base64.b64decode(encoded, validate=True)
-            except (ValueError, base64.binascii.Error) as exc:
-                raise ValueError("image_base64 contains invalid base64") from exc
         else:
             raise ValueError("provide image_url or image_base64")
         if not data:
@@ -3319,7 +3323,10 @@ class CloudflareRelay:
                 "description": (
                     "Record the final result exactly once. If the Agent produced an image, "
                     "send it in images (or image_url/image_base64) so the relay forwards it "
-                    "to the quoted Feishu/Lark message before the text result is delivered."
+                    "to the quoted Feishu/Lark message before the text result is delivered. "
+                    "Prefer image_base64 (or a base64 data URL); when both image_base64 and "
+                    "image_url are supplied, the base64 payload is used. Never pass a private "
+                    "ChatGPT attachment URL."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -3422,7 +3429,10 @@ class CloudflareRelay:
                 "name": "send_image",
                 "description": (
                     "Send an Agent-produced image back to the user's quoted Feishu/Lark "
-                    "message. Provide image_url (HTTPS or a base64 data URL) or image_base64. "
+                    "message. Prefer image_base64 (or a base64 data URL); if both image_base64 "
+                    "and image_url are supplied, the base64 payload is used. Provide image_url "
+                    "only when it is a publicly downloadable HTTPS URL. Never pass a private "
+                    "ChatGPT attachment URL. "
                     "The image is uploaded through the correct platform bot and sent as an "
                     "image reply; use this tool instead of only embedding a Markdown image "
                     "link in record_result."
